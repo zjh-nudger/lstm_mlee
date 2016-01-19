@@ -16,9 +16,7 @@ import theano.tensor as tensor
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 import mlee
-import constant
 
-datasets = {constant.dataset: (mlee.load_data, mlee.prepare_data)}
 
 # Set the random number generators' seeds for consistency
 SEED = 123
@@ -53,11 +51,6 @@ def get_minibatches_idx(n, minibatch_size, shuffle=False):
         minibatches.append(idx_list[minibatch_start:])
 
     return zip(range(len(minibatches)), minibatches)
-
-#prepare_data,load_data
-def get_dataset(name):
-    return datasets[name][0], datasets[name][1]
-
 
 def zipp(params, tparams):
     """
@@ -174,7 +167,7 @@ def param_init_lstm(options, params, prefix='lstm'):
 '''
 state_below : embedding as initializatio
 '''
-def lstm_layer(tparams, state_below, options, prefix='lstm', mask=None):
+def lstm_layer(tparams, state_below,parent_emb, options, prefix='lstm', mask=None):
     nsteps = state_below.shape[0]#句子长度（单词个数）
     if state_below.ndim == 3:
         n_samples = state_below.shape[1]#batch_size
@@ -390,6 +383,7 @@ def build_model(tparams, options):
     use_noise = theano.shared(numpy_floatX(0.))
 
     x = tensor.matrix('x', dtype='int64')#单词索引，固定句子长度?
+    x_parent = tensor.matrix('x_parent',dtype='int64')
     mask = tensor.matrix('mask', dtype=config.floatX)
     y = tensor.vector('y', dtype='int64')
 
@@ -399,7 +393,10 @@ def build_model(tparams, options):
     emb = tparams['Wemb'][x.flatten()].reshape([n_timesteps,
                                                 n_samples,
                                                 options['dim_proj']])
-    proj = get_layer(options['encoder'])[1](tparams, emb, options,
+    parent_emb = tparams['Wemb'][x_parent.flatten()].reshape([n_timesteps,
+                                                n_samples,
+                                                options['dim_proj']])
+    proj = get_layer(options['encoder'])[1](tparams, emb,parent_emb, options,
                                             prefix=options['encoder'],
                                             mask=mask)
     if options['encoder'] == 'lstm':
@@ -483,7 +480,7 @@ def train_lstm(
     lrate=0.0001,  # Learning rate for sgd (not used for adadelta and rmsprop)
     optimizer=adadelta,  # sgd, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
     encoder='lstm',  # TODO: can be removed must be lstm.
-    saveto='data/lstm_model.npz',  # The best model will be saved there
+    saveto='data/lstm_tree_model.npz',  # The best model will be saved there
     validFreq=1,  # Compute the validation error after this number of update.
     saveFreq=10,  # Save the parameters after every saveFreq updates
     batch_size=256,  # The batch size during training.
@@ -501,10 +498,8 @@ def train_lstm(
     model_options = locals().copy()
     print "model options", model_options
 
-    load_data, prepare_data = get_dataset(dataset)
-
     print 'Loading data'
-    train, _ , test = load_data(valid_portion=0)
+    train, _ , test = mlee.load_data(valid_portion=0)
     ydim = numpy.max(train[1]) + 1
 
     model_options['ydim'] = ydim#分类类别个数
@@ -579,7 +574,7 @@ def train_lstm(
                 # Get the data in numpy.ndarray format
                 # This swap the axis!
                 # Return something of shape (minibatch maxlen, n samples)
-                x, mask, y = prepare_data(x, y)
+                x, mask, y = mlee.prepare_data(x, y)
                 n_samples += x.shape[1]
 
                 cost = f_grad_shared(x, mask, y)
